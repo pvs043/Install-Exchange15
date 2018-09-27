@@ -8,13 +8,13 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.99.6, August 20th, 2018
+    Version 2.99.8, September 12th, 2018
 
-    Thanks to Maarten Piederiet, Thomas Stensitzki, Brian Reid, Martin Sieber, Sebastiaan Brozius,
-    Bobby West, Pavel Andreev and everyone else who provided feedback or contributed in other ways.
+    Thanks to Maarten Piederiet, Thomas Stensitzki, Brian Reid, Martin Sieber, Sebastiaan Brozius, Bobby West, 
+    Pavel Andreev, Rob Whaley, Simon Poirier and everyone else who provided feedback or contributed in other ways.
 
     .DESCRIPTION
-    This script can install Exchange 2013/2016 prerequisites, optionally create the Exchange
+    This script can install Exchange 2013/2016/2019 Preview prerequisites, optionally create the Exchange
     organization (prepares Active Directory) and installs Exchange Server. When the AutoPilot switch is
     specified, it will do all the required rebooting and automatic logging on using provided credentials.
     To keep track of provided parameters and state, it uses an XML file; if this file is
@@ -26,9 +26,15 @@
 
     .NOTES
     Requirements:
-    - Windows Server 2008 R2 SP1, Windows Server 2012, Windows Server 2012 R2,
-      Windows Server 2016 (Exchange 2016 CU3+ only), or Windows Server 2019 Preview (Exchange 2019 Preview)
-    - Edge role not supported.
+    - Operating Systems
+        - Windows Server 2008 R2 SP1
+        - Windows Server 2012
+        - Windows Server 2012 R2
+        - Windows Server 2016 (Exchange 2016 CU3+ only)
+        - Windows Server 2019 Preview (Desktop or Core, for Exchange 2019 Preview)
+    - Domain-joined system (Except for Edge)
+    - "AutoPilot" mode requires account with elevated administrator privileges
+    - When you let the script prepare AD, the account needs proper permissions.
 
     .REVISIONS
 
@@ -202,6 +208,8 @@
     2.99.5  Added setting desktop background during setup
             Some code cleanup
     2.99.6  Added Exchange 2019 Preview on Windows Server 2019 support (desktop & core)
+    2.99.7  Updated location where hotfix are being published
+    2.99.8  Updated to Support Edge (Simon Poirier)
 
     .PARAMETER Organization
     Specifies name of the Exchange organization to create. When omitted, the step
@@ -212,6 +220,12 @@
 
     .PARAMETER InstallMailbox
     Specifies you want to install the Mailbox server role  (Exchange 2013/2016).
+
+    .PARAMETER InstallEdge
+    Specifies you want to install the Edge server role  (Exchange 2013/2016).
+
+    .PARAMETER EdgeDNSSuffix
+    Specifies the DNS suffix you want to use on your EDGE
 
     .PARAMETER InstallCAS
     Specifies you want to install the CAS role (Exchange 2013 only).
@@ -289,14 +303,14 @@
     Internal Use Only :)
 
     .EXAMPLE
-    $Cred=Get-Credentials
+    $Cred=Get-Credential
     .\Install-Exchange15.ps1 -Organization Fabrikam -InstallMailbox -MDBDBPath C:\MailboxData\MDB1\DB -MDBLogPath C:\MailboxData\MDB1\Log -MDBName MDB1 -InstallPath C:\Install -AutoPilot -Credentials $Cred -SourcePath '\\server\share\Exchange 2013\mu_exchange_server_2013_x64_dvd_1112105' -SCP https://autodiscover.fabrikam.com/autodiscover/autodiscover.xml -Verbose
 
     .EXAMPLE
     .\Install-Exchange15.ps1 -InstallMailbox -MDBName MDB3 -MDBDBPath C:\MailboxData\MDB3\DB\MDB3.edb -MDBLogPath C:\MailboxData\MDB3\Log -AutoPilot -SourcePath \\server\share\Exchange2013\mu_exchange_server_2013_x64_dvd_1112105 -Verbose
 
     .EXAMPLE
-    $Cred=Get-Credentials
+    $Cred=Get-Credential
     .\Install-Exchange15.ps1 -InstallMultiRole -AutoPilot -Credentials $Cred
 
     .EXAMPLE
@@ -315,14 +329,18 @@ param(
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 		[ValidatePattern("(?# Organization Name can only consist of upper or lowercase A-Z, 0-9, spaces - not at beginning or end, hyphen or dash characters, can be up to 64 characters in length, and can't be empty)^[a-zA-Z0-9\-\�\�][a-zA-Z0-9\-\�\�\ ]{1,62}[a-zA-Z0-9\-\�\�]$")]
 		[string]$Organization,
-        [parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-        	[switch]$InstallMultiRole,
+    [parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+        [switch]$InstallMultiRole,
 	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
-        	[switch]$InstallCAS,
+        [switch]$InstallCAS,
    	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-    		[switch]$InstallMailbox,
+            [switch]$InstallMailbox,
+    [parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+        [switch]$InstallEdge,
+    [parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+    	[String]$EdgeDNSSuffix,
 	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-        	[switch]$Recover,
+        [switch]$Recover,
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 		[string]$MDBName,
@@ -333,6 +351,7 @@ param(
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 		[string]$MDBLogPath,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
@@ -340,14 +359,16 @@ param(
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
 		[string]$InstallPath= 'C:\Install',
 	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
+	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
  	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
 	[parameter( Mandatory=$true, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-        	[ValidateScript({ Test-Path $_ -PathType Container })]
+        [ValidateScript({ Test-Path $_ -PathType Container })]
 		[string]$SourcePath,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 		[string]$TargetPath,
@@ -355,83 +376,93 @@ param(
 		[switch]$NoSetup= $false,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
 		[switch]$AutoPilot,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-	        [System.Management.Automation.PsCredential]$Credentials,
+        [System.Management.Automation.PsCredential]$Credentials,
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
+        [Switch]$IncludeFixes,
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
+        [Switch]$NoNet461,
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
+        [Switch]$NoNet471,
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
+        [Switch]$UseWMF3,
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
+        [Switch]$DisableSSL3,
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
+	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
+        [Switch]$DisableRC4,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$IncludeFixes,
- 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$NoNet461,
- 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$NoNet471,
+        [ValidateScript({ ($_ -eq '') -or ($_ -eq '-') -or (([System.URI]$_).AbsoluteUri -ne $null)})]
+        [String]$SCP='',
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$UseWMF3,
+        [Switch]$Lock,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$DisableSSL3,
+        [Switch]$SkipRolesCheck,
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
  	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$DisableRC4,
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
- 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-                [ValidateScript({ ($_ -eq '') -or ($_ -eq '-') -or (([System.URI]$_).AbsoluteUri -ne $null)})]
-                [String]$SCP='',
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
- 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$Lock,
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
- 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [Switch]$SkipRolesCheck,
-	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='C')]
- 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='M')]
+ 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='E')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='CM')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='NoSetup')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='AutoPilot')]
 	[parameter( Mandatory=$false, ValueFromPipelineByPropertyName=$false, ParameterSetName='Recover')]
-                [ValidateRange(0,6)]
-	        [int]$Phase
+        [ValidateRange(0,6)]
+        [int]$Phase
 )
 
 process {
 
-    $ScriptVersion                  = '2.99.6'
+    $ScriptVersion                  = '2.99.8'
 
     $ERR_OK                         = 0
-    $ERR_PROBLEMADPREPARE	    = 1001
+    $ERR_PROBLEMADPREPARE	        = 1001
     $ERR_UNEXPECTEDOS               = 1002
     $ERR_UNEXPTECTEDPHASE           = 1003
     $ERR_PROBLEMADDINGFEATURE	    = 1004
@@ -780,8 +811,7 @@ process {
             $Domain = $Parts[0]
             $UserName= $Parts[1]
             Return "$Domain\$UserName"
-        }
-        Else {
+        } Else {
             If( $PlainTextAccount.indexOf('@') -gt 0) {
                 Return $PlainTextAccount
             }
@@ -793,17 +823,41 @@ process {
         }
     }
 
+    #From https://gallery.technet.microsoft.com/scriptcenter/Verify-the-Local-User-1e365545
+    function Test-LocalCredential {
+        [CmdletBinding()]
+        Param
+        (
+            [string]$UserName,
+            [string]$ComputerName = $env:COMPUTERNAME,
+            [string]$Password
+        )
+        if (!($UserName) -or !($Password)) {
+            Write-Warning 'Test-LocalCredential: Please specify both user name and password'
+        } else {
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+            $DS = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('machine',$ComputerName)
+            $DS.ValidateCredentials($UserName, $Password)
+        }
+    }
+
     Function validate-Credentials {
         $PlainTextPassword= [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR( (ConvertTo-SecureString $State['AdminPassword']) ))
         $FullPlainTextAccount= get-FullDomainAccount
 	    Try {
-		    $dc= New-Object DirectoryServices.DirectoryEntry( $Null, $FullPlainTextAccount, $PlainTextPassword)
-		    If($dc.Name) {
-		    	return $true
-		    }
-		    Else {
-			    Return $false
-		    }
+            If( $State['InstallEdge']) {
+                $Username = $FullPlainTextAccount.split("\")[-1]
+                Return $( Test-LocalCredential -UserName $Username -Password $PlainTextPassword)
+            }else{
+                $dc= New-Object DirectoryServices.DirectoryEntry( $Null, $FullPlainTextAccount, $PlainTextPassword)
+                If($dc.Name) {
+                    return $true
+                }
+                Else {
+                    Return $false
+                }
+            }
+		    
 	    }
 	    Catch {
 		    Return $false
@@ -988,26 +1042,42 @@ process {
     }
 
     Function Get-ADSite {
-	Try {
-        	return [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
-	}
-	Catch {
-		Return $null
-	}
+        Try {
+                return [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite()
+        }
+        Catch {
+            Return $null
+        }
+    }
+
+    Function Set-EdgeDNSSuffix ([string]$DNSSuffix){
+        Write-MyVerbose 'Setting Primary DNS Suffix'
+        #https://technet.microsoft.com/library%28EXCHG.150%29/ms.exch.setupreadiness.FqdnMissing.aspx?f=255&MSPPError=-2147217396
+        #Update primary DNS Suffix for FQDN
+        Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\" -Name Domain -Value $DNSSuffix
+        Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\" -Name "NV Domain" -Value $DNSSuffix
+
     }
 
     Function Load-ExchangeModule {
         Write-MyVerbose 'Loading Exchange PowerShell module'
         If( -not ( Get-Command Connect-ExchangeServer -ErrorAction SilentlyContinue)) {
             $SetupPath= (Get-ItemProperty -Path $EXCHANGEINSTALLKEY -Name MsiInstallPath -ErrorAction SilentlyContinue).MsiInstallPath
-            If( $SetupPath -and (Test-Path "$SetupPath\bin\RemoteExchange.ps1" )) {
-                . "$SetupPath\bin\RemoteExchange.ps1" | Out-Null
-                Try {
-                    Connect-ExchangeServer (Get-LocalFQDNHostname)
-                }
-                Catch {
-                    Write-MyError 'Problem loading Exchange module'
-                }
+            If( ($State['InstallEdge'] -eq $true -and $SetupPath -and (Test-Path "$SetupPath\bin\Exchange.ps1")) -or ($State['InstallEdge'] -eq $false -and $SetupPath -and (Test-Path "$SetupPath\bin\RemoteExchange.ps1"))) {
+                If( $State['InstallEdge']) {
+                    Add-PSSnapin Microsoft.Exchange.Management.PowerShell.E2010
+                    . "$SetupPath\bin\Exchange.ps1" | Out-Null
+                }else{
+                    . "$SetupPath\bin\RemoteExchange.ps1" | Out-Null
+                    Try {
+                        Connect-ExchangeServer (Get-LocalFQDNHostname)
+                    }
+                    Catch {
+                        Write-MyError 'Problem loading Exchange module'
+                    }
+                } 
+             
+                
             }
             Else {
                 Write-MyWarning "Can't determine installation path to load Exchange module"
@@ -1042,15 +1112,19 @@ process {
             Else {
 
                 $roles= @()
-                If( $State['InstallMailbox']) {
-                    $roles+= 'Mailbox'
-                }
-                If( $State['InstallCAS']) {
-                    If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
-                        Write-MyWarning 'Ignoring InstallCAS option for Exchange 2016'
+                If( $State['InstallEdge']) {
+                    $roles = 'EdgeTransport'
+                }else{
+                    If( $State['InstallMailbox']) {
+                        $roles+= 'Mailbox'
                     }
-                    Else {
-                       $roles+= 'ClientAccess'
+                    If( $State['InstallCAS']) {
+                        If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
+                            Write-MyWarning 'Ignoring InstallCAS option for Exchange 2016'
+                        }
+                        Else {
+                           $roles+= 'ClientAccess'
+                        }
                     }
                 }
 	            $RolesParm= $roles -Join ','
@@ -1080,36 +1154,40 @@ process {
     }
 
     Function Prepare-Exchange {
-        Write-MyOutput 'Preparing Active Directory'
-        $params= @()
-        Write-MyOutput 'Checking Exchange organization existence'
-        If( ( Test-ExchangeOrganization $State['OrganizationName']) -ne $null) {
-            $params+= '/PrepareAD', "/OrganizationName:`"$($State['OrganizationName'])`""
-        }
-        Else {
-            Write-MyOutput 'Organization exist; checking Exchange Forest Schema and Domain versions'
-            $forestlvl= Get-ExchangeForestLevel
-            $domainlvl= Get-ExchangeDomainLevel
-            Write-MyOutput "Exchange Forest Schema version: $forestlvl, Domain: $domainlvl)"
-            If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
-                $MinFFL= $EX2016_MINFORESTLEVEL
-                $MinDFL= $EX2016_MINDOMAINLEVEL
+        If(!$State['InstallEdge']) {
+            Write-MyOutput 'Preparing Active Directory'
+            $params= @()
+            Write-MyOutput 'Checking Exchange organization existence'
+            If( ( Test-ExchangeOrganization $State['OrganizationName']) -ne $null) {
+                $params+= '/PrepareAD', "/OrganizationName:`"$($State['OrganizationName'])`""
             }
             Else {
-                $MinFFL= $EX2013_MINFORESTLEVEL
-                $MinDFL= $EX2013_MINDOMAINLEVEL
-            }
-            If(( $forestlvl -lt $MinFFL) -or ( $domainlvl -lt $MinDFL)) {
-                Write-MyOutput "Exchange Forest Schema or Domain needs updating (Required: $MinFFL/$MinDFL)"
-                $params+= '/PrepareAD'
+                Write-MyOutput 'Organization exist; checking Exchange Forest Schema and Domain versions'
+                $forestlvl= Get-ExchangeForestLevel
+                $domainlvl= Get-ExchangeDomainLevel
+                Write-MyOutput "Exchange Forest Schema version: $forestlvl, Domain: $domainlvl)"
+                If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
+                    $MinFFL= $EX2016_MINFORESTLEVEL
+                    $MinDFL= $EX2016_MINDOMAINLEVEL
+                }
+                Else {
+                    $MinFFL= $EX2013_MINFORESTLEVEL
+                    $MinDFL= $EX2013_MINDOMAINLEVEL
+                }
+                If(( $forestlvl -lt $MinFFL) -or ( $domainlvl -lt $MinDFL)) {
+                    Write-MyOutput "Exchange Forest Schema or Domain needs updating (Required: $MinFFL/$MinDFL)"
+                    $params+= '/PrepareAD'
 
-            }
-            Else {
-                Write-MyOutput 'Active Directory looks already updated'.
+                }
+                Else {
+                    Write-MyOutput 'Active Directory looks already updated'.
+                }
             }
         }
         If ($params.count -gt 0) {
-            Write-MyOutput "Preparing AD, Exchange organization will be $($State['OrganizationName'])"
+            If(!$State['InstallEdge']) {
+                Write-MyOutput "Preparing AD, Exchange organization will be $($State['OrganizationName'])"¨
+            }
             $params+= '/IAcceptExchangeServerLicenseTerms'
             StartWait-Process $State['SourcePath'] 'setup.exe' $params
             If( ( ( Test-ExchangeOrganization $State['OrganizationName']) -eq $null) -or
@@ -1138,7 +1216,12 @@ process {
                 break
             }
             $WS2016_MAJOR {
-                $Feats= ('RSAT-ADDS', 'Bits', 'RSAT-Clustering-CmdInterface')
+                If($State['InstallEdge']) {
+                    $Feats= ('ADLDS', 'Bits')
+                }else{
+                    $Feats= ('RSAT-ADDS', 'Bits', 'RSAT-Clustering-CmdInterface')
+                }
+                
                 If( (is-MinimalBuild -BuildNumber $FullOSVersion -ReferenceBuildNumber $WS2019_PREFULL) -and (is-ServerCore) ) {
 			$Feats+= 'Server-Media-Foundation'
 		}
@@ -1627,7 +1710,7 @@ process {
             }
         }
 
-	If( $State["SkipRolesCheck"]) {
+	If( $State["SkipRolesCheck"] -or $State['InstallEdge']) {
                 Write-MyOutput 'SkipRolesCheck: Skipping validation of Schema & Enterprise Administrators membership'
         }
         Else {
@@ -1647,36 +1730,36 @@ process {
                 Write-MyOutput 'User is member of Enterprise Administrators'
             }
         }
-
-        $ADSite= Get-ADSite
-        If( $ADSite) {
-            Write-MyOutput "Computer is located in AD site $ADSite"
-        }
-        Else {
-    		Write-MyError 'Could not determine Active Directory site'
-            Exit $ERR_COULDNOTDETERMINEADSITE
-        }
-
-        $ExOrg= Get-ExchangeOrganization
-        If( $ExOrg) {
-            If( $State['OrganizationName']) {
-                If( $State['OrganizationName'] -ne $ExOrg) {
-                    Write-MyError "OrganizationName mismatches with discovered Exchange Organization name ($ExOrg, expected $($State['OrganizationName']))"
-                    Exit $ERR_ORGANIZATIONNAMEMISMATCH
-                }
-            }
-            Write-MyOutput "Exchange Organization is: $ExOrg"
-        }
-        Else {
-            If( $State['OrganizationName']) {
-                Write-MyOutput "Exchange Organization will be: $($State['OrganizationName'])"
+        if(!$State['InstallEdge']){
+            $ADSite= Get-ADSite
+            If( $ADSite) {
+                Write-MyOutput "Computer is located in AD site $ADSite"
             }
             Else {
-                Write-MyError 'OrganizationName not specified and no Exchange Organization discovered'
-                Exit $ERR_MISSINGORGANIZATIONNAME
+                Write-MyError 'Could not determine Active Directory site'
+                Exit $ERR_COULDNOTDETERMINEADSITE
+            }
+        
+            $ExOrg= Get-ExchangeOrganization
+            If( $ExOrg) {
+                If( $State['OrganizationName']) {
+                    If( $State['OrganizationName'] -ne $ExOrg) {
+                        Write-MyError "OrganizationName mismatches with discovered Exchange Organization name ($ExOrg, expected $($State['OrganizationName']))"
+                        Exit $ERR_ORGANIZATIONNAMEMISMATCH
+                    }
+                }
+                Write-MyOutput "Exchange Organization is: $ExOrg"
+            }
+            Else {
+                If( $State['OrganizationName']) {
+                    Write-MyOutput "Exchange Organization will be: $($State['OrganizationName'])"
+                }
+                Else {
+                    Write-MyError 'OrganizationName not specified and no Exchange Organization discovered'
+                    Exit $ERR_MISSINGORGANIZATIONNAME
+                }
             }
         }
-
         Write-MyOutput 'Checking if we can access Exchange setup ..'
         If(! (Test-Path "$($State['SourcePath'])setup.exe")) {
             Write-MyError "Can't find Exchange setup at $($State['SourcePath'])"
@@ -1714,7 +1797,7 @@ process {
         Else {
             Write-MyOutput 'Checking roles to install'
             If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
-                If ( !( $State['InstallMailbox'])) {
+                If ( !( $State['InstallMailbox']) -and !($State['InstallEdge']) ) {
                     Write-MyError 'No roles specified to install'
                     Exit $ERR_UNKNOWNROLESSPECIFIED
                 }
@@ -1723,35 +1806,35 @@ process {
                 }
             }
             Else {
-                If ( !( $State['InstallMailbox']) -and !( $State['InstallCAS'])) {
+                If ( !( $State['InstallMailbox']) -and !( $State['InstallCAS']) -and !($State['InstallEdge']) ) {
                     Write-MyError 'No roles specified to install'
                     Exit $ERR_UNKNOWNROLESSPECIFIED
                 }
             }
         }
-
-        If( ( Test-ExistingExchangeServer $env:computerName) -and ($State["InstallPhase"] -eq 1)) {
-            If( $State['Recover']) {
-                Write-MyOutput 'Recovery mode specified, Exchange server object found'
-            }
-            Else {
-                If( Test-Path $EXCHANGEINSTALLKEY) {
-                    Write-MyOutput 'Existing Exchange server object found in Active Directory, and installation seems present - switching to Upgrade mode'
-                    $State['Upgrade']= $true
+        if( !($State['InstallEdge'])){
+            If( ( Test-ExistingExchangeServer $env:computerName) -and ($State["InstallPhase"] -eq 1)) {
+                If( $State['Recover']) {
+                    Write-MyOutput 'Recovery mode specified, Exchange server object found'
                 }
                 Else {
-                    Write-MyError 'Existing Exchange server object found in Active Directory, but installation missing - please use Recover switch to recover a server'
-                    Exit $ERR_PROBLEMEXCHANGESERVEREXISTS
+                    If( Test-Path $EXCHANGEINSTALLKEY) {
+                        Write-MyOutput 'Existing Exchange server object found in Active Directory, and installation seems present - switching to Upgrade mode'
+                        $State['Upgrade']= $true
+                    }
+                    Else {
+                        Write-MyError 'Existing Exchange server object found in Active Directory, but installation missing - please use Recover switch to recover a server'
+                        Exit $ERR_PROBLEMEXCHANGESERVEREXISTS
+                    }
                 }
             }
+        
+            Write-MyOutput 'Checking domain membership status ..'
+            If(! ( Get-WmiObject Win32_ComputerSystem).PartOfDomain) {
+                Write-MyError 'System is not domain-joined'
+                Exit $ERR_NOTDOMAINJOINED
+            }
         }
-
-        Write-MyOutput 'Checking domain membership status ..'
-        If(! ( Get-WmiObject Win32_ComputerSystem).PartOfDomain) {
-            Write-MyError 'System is not domain-joined'
-            Exit $ERR_NOTDOMAINJOINED
-        }
-
         Write-MyOutput 'Checking NIC configuration ..'
         If(! (Get-WmiObject Win32_NetworkAdapterConfiguration -Filter {IPEnabled=True and DHCPEnabled=False})) {
             Write-MyError "System doesn't have a static IP addresses configured"
@@ -1782,75 +1865,75 @@ process {
                 Exit $ERR_MDBDBLOGPATH
             }
         }
-
-        Write-MyOutput 'Checking Exchange Forest Schema Version'
-        If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
-            $minFFL= $EX2016_MINFORESTLEVEL
-            $minDFL= $EX2016_MINDOMAINLEVEL
-        }
-        Else {
-            $minFFL= $EX2013_MINFORESTLEVEL
-            $minDFL= $EX2013_MINDOMAINLEVEL
-        }
-        $EFL= Get-ExchangeForestLevel
-        If( $EFL) {
-            Write-MyOutput "Exchange Forest Schema Version is $EFL"
-        }
-        Else {
-            Write-MyOutput 'Active Directory is not prepared'
-        }
-        If( $EFL -lt $minFFL) {
-            If( $State['InstallPhase'] -eq 4) {
-                # Only check before starting setup
-                Write-MyError "Minimum required FFL version is $minFFL, aborting"
-                Exit $ERR_BADFORESTLEVEL
-            }
-        }
-
-        Write-MyOutput 'Checking Exchange Domain Version'
-        $EDV= Get-ExchangeDomainLevel
-        If( $EDV) {
-            Write-MyOutput "Exchange Domain Version is $EDV"
-        }
-        If( $EDV -lt $minDFL) {
-            If( $State['InstallPhase'] -eq 4) {
-                # Only check before starting setup
-                Write-MyError "Minimum required DFL version is $minDFL, aborting"
-                Exit $ERR_BADDOMAINLEVEL
-            }
-        }
-
-        Write-MyOutput 'Checking domain mode'
-        If( Test-DomainNativeMode -eq $DOMAIN_MIXEDMODE) {
-            Write-MyError 'Domain is in mixed mode, native mode is required'
-            Exit $ERR_ADMIXEDMODE
-        }
-        Else {
-            Write-MyOutput 'Domain is in native mode'
-        }
-
-        Write-MyOutput 'Checking Forest Functional Level'
-        $FFL= Get-ForestFunctionalLevel
-        Write-MyVerbose "Forest Functional Level=$FFL"
-        If( $FFL -lt $FOREST_LEVEL2003) {
-            Write-MyError 'Forest is not Functional Level 2003 or later'
-            Exit $ERR_ADFORESTLEVEL
-        }
-        Else {
-            If( $FFL -lt $FOREST_LEVEL2008R2) {
-                If( ($MajorOSVersion -eq $WS2016_MAJOR ) -and -not (is-MinimalBuild $SetupVersion $EX2016SETUPEXE_CU7)) {
-                    Write-MyError ('Exchange Server 2016 CU7 and later requires Forest Functionality Level 2008R2 (is {0}).' -f $FFL)
-                    Exit $ERR_ADFORESTLEVEL
-                }
-                Else {
-                    Write-MyOutput 'Forest Functional Level is 2008R2 or later'
-                }
+        if( !($State['InstallEdge'])){
+            Write-MyOutput 'Checking Exchange Forest Schema Version'
+            If( $State['MajorSetupVersion'] -ge $EX2016_MAJOR) {
+                $minFFL= $EX2016_MINFORESTLEVEL
+                $minDFL= $EX2016_MINDOMAINLEVEL
             }
             Else {
-                Write-MyOutput 'Forest Functional Level is 2003 or later'
+                $minFFL= $EX2013_MINFORESTLEVEL
+                $minDFL= $EX2013_MINDOMAINLEVEL
+            }
+            $EFL= Get-ExchangeForestLevel
+            If( $EFL) {
+                Write-MyOutput "Exchange Forest Schema Version is $EFL"
+            }
+            Else {
+                Write-MyOutput 'Active Directory is not prepared'
+            }
+            If( $EFL -lt $minFFL) {
+                If( $State['InstallPhase'] -eq 4) {
+                    # Only check before starting setup
+                    Write-MyError "Minimum required FFL version is $minFFL, aborting"
+                    Exit $ERR_BADFORESTLEVEL
+                }
+            }
+
+            Write-MyOutput 'Checking Exchange Domain Version'
+            $EDV= Get-ExchangeDomainLevel
+            If( $EDV) {
+                Write-MyOutput "Exchange Domain Version is $EDV"
+            }
+            If( $EDV -lt $minDFL) {
+                If( $State['InstallPhase'] -eq 4) {
+                    # Only check before starting setup
+                    Write-MyError "Minimum required DFL version is $minDFL, aborting"
+                    Exit $ERR_BADDOMAINLEVEL
+                }
+            }
+
+            Write-MyOutput 'Checking domain mode'
+            If( Test-DomainNativeMode -eq $DOMAIN_MIXEDMODE) {
+                Write-MyError 'Domain is in mixed mode, native mode is required'
+                Exit $ERR_ADMIXEDMODE
+            }
+            Else {
+                Write-MyOutput 'Domain is in native mode'
+            }
+
+            Write-MyOutput 'Checking Forest Functional Level'
+            $FFL= Get-ForestFunctionalLevel
+            Write-MyVerbose "Forest Functional Level=$FFL"
+            If( $FFL -lt $FOREST_LEVEL2003) {
+                Write-MyError 'Forest is not Functional Level 2003 or later'
+                Exit $ERR_ADFORESTLEVEL
+            }
+            Else {
+                If( $FFL -lt $FOREST_LEVEL2008R2) {
+                    If( ($MajorOSVersion -eq $WS2016_MAJOR ) -and -not (is-MinimalBuild $SetupVersion $EX2016SETUPEXE_CU7)) {
+                        Write-MyError ('Exchange Server 2016 CU7 and later requires Forest Functionality Level 2008R2 (is {0}).' -f $FFL)
+                        Exit $ERR_ADFORESTLEVEL
+                    }
+                    Else {
+                        Write-MyOutput 'Forest Functional Level is 2008R2 or later'
+                    }
+                }
+                Else {
+                    Write-MyOutput 'Forest Functional Level is 2003 or later'
+                }
             }
         }
-
         If( Get-PSExecutionPolicy) {
             # Referring to http://support.microsoft.com/kb/2810617/en
             Write-MyWarning 'PowerShell Execution Policy is configured through GPO and may prohibit Exchange Setup. Clearing entry.'
@@ -2113,6 +2196,7 @@ process {
         }
 
         $State["InstallMailbox"]= $InstallMailbox
+        $State["InstallEdge"]= $InstallEdge
         $State["InstallCAS"]= $InstallCAS
         $State["InstallMultiRole"]= $InstallMultiRole
         $State["InstallMDBDBPath"]= $MDBDBPath
@@ -2143,7 +2227,9 @@ process {
         $State["SkipRolesCheck"]= $SkipRolesCheck
         $State["SCP"]= $SCP
         $State["Lock"]= $Lock
+        $State["EdgeDNSSuffix"]= $EdgeDNSSuffix
         $State["TranscriptFile"]= "$($State["InstallPath"])\$($env:computerName)_$($ScriptName)_$(Get-Date -format "yyyyMMddHHmmss").log"
+    
         
         If( $WPAssembliesLoaded) {
             $temp= Get-WallPaper
@@ -2398,10 +2484,10 @@ process {
 
             # OS specific hotfixes
             Switch( $MajorOSVersion) {
-                $WS2012_MAJOR {
-                    Package-Install "KB2985459" "The W3wp.exe process has high CPU usage when you run PowerShell commands for Exchange" "Windows8-RT-KB2985459-x64.msu|477081_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows%208/Windows%20Server%202012%20RTM/nosp/Fix512067/9200/free/477081_intl_x64_zip.exe" ("/quiet", "/norestart")
+                $WS2012_MAJOR { 
+                    Package-Install "KB2985459" "The W3wp.exe process has high CPU usage when you run PowerShell commands for Exchange" "Windows8-RT-KB2985459-x64.msu|477081_intl_x64_zip.exe" "https://hotfixv4.trafficmanager.net/Windows%208/Windows%20Server%202012%20RTM/nosp/Fix512067/9200/free/477081_intl_x64_zip.exe" ("/quiet", "/norestart")
                     Package-Install "KB2884597" "Virtual Disk Service or applications that use the Virtual Disk Service crash or freeze in Windows Server 2012" "Windows8-RT-KB2884597-x64.msu|467323_intl_x64_zip.exe" "hotfixv4.microsoft.com/Windows%208%20RTM/nosp/Fix469260/9200/free/467323_intl_x64_zip.exe" ("/quiet", "/norestart")
-                    Package-Install "KB2894875" "Windows 8-based or Windows Server 2012-based computer freezes when you run the 'dir' command on an ReFS volume" "Windows8-RT-KB2894875-x64.msu|468889_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows%208%20RTM/nosp/Fix473391/9200/free/468889_intl_x64_zip.exe" ("/quiet", "/norestart")
+                    Package-Install "KB2894875" "Windows 8-based or Windows Server 2012-based computer freezes when you run the 'dir' command on an ReFS volume" "Windows8-RT-KB2894875-x64.msu|468889_intl_x64_zip.exe" "https://hotfixv4.trafficmanager.net/Windows%208%20RTM/nosp/Fix473391/9200/free/468889_intl_x64_zip.exe" ("/quiet", "/norestart")
                     break
                 }
                 $WS2008R2_MAJOR {
@@ -2411,16 +2497,16 @@ process {
                         Package-Install "KB2819745" "Windows Management Framework 4.0" "Windows6.1-KB2819745-x64-MultiPkg.msu" "http://download.microsoft.com/download/3/D/6/3D61D262-8549-4769-A660-230B67E15B25/Windows6.1-KB2819745-x64-MultiPkg.msu" ("/quiet", "/norestart")
                     }
                     Package-Install "KB974405" "Windows Identity Foundation" "Windows6.1-KB974405-x64.msu" "http://download.microsoft.com/download/D/7/2/D72FD747-69B6-40B7-875B-C2B40A6B2BDD/Windows6.1-KB974405-x64.msu" ("/quiet", "/norestart")
-                    Package-Install "KB2619234" "Enable Association Cookie/GUID used by RPC/HTTP to also be used at RPC layer" "Windows6.1-KB2619234-v2-x64.msu|437879_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows 7/Windows Server2008 R2 SP1/sp2/Fix381274/7600/free/437879_intl_x64_zip.exe" ("/quiet", "/norestart")
+                    Package-Install "KB2619234" "Enable Association Cookie/GUID used by RPC/HTTP to also be used at RPC layer" "Windows6.1-KB2619234-v2-x64.msu|437879_intl_x64_zip.exe" "https://hotfixv4.trafficmanager.net/Windows 7/Windows Server2008 R2 SP1/sp2/Fix381274/7600/free/437879_intl_x64_zip.exe" ("/quiet", "/norestart")
                     Package-Install "KB2758857" "Insecure library loading could allow remote code execution (supersedes KB2533623)" "Windows6.1-KB2758857-x64.msu" "http://download.microsoft.com/download/A/9/1/A91A39EA-9BD8-422F-A018-44CD62CA7485/Windows6.1-KB2758857-x64.msu" ("/quiet", "/norestart")
-                    Package-Install "KB3004383" "High CPU usage by an application that depends on a Microsoft LDAP client in Windows Server 2008 R2 SP1" "Windows6.1-KB3004383-x64.msu|478887_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows%207/Windows%20Server2008%20R2%20SP1/sp2/Fix523720/7600/free/478887_intl_x64_zip.exe" ("/quiet", "/norestart")
+                    Package-Install "KB3004383" "High CPU usage by an application that depends on a Microsoft LDAP client in Windows Server 2008 R2 SP1" "Windows6.1-KB3004383-x64.msu|478887_intl_x64_zip.exe" "https://hotfixv4.trafficmanager.net/Windows%207/Windows%20Server2008%20R2%20SP1/sp2/Fix523720/7600/free/478887_intl_x64_zip.exe" ("/quiet", "/norestart")
                     break
                 }
                 $WS2012_MAJOR {
                     break
                 }
                 $WS2012R2_MAJOR {
-                    Package-Install "KB3041832" "CPU usage is high when you use RPC over HTTP protocol in Windows 8.1 or Windows Server 2012 R2" "Windows8.1-KB3041832-x64.msu|482449_intl_x64_zip.exe" "http://hotfixv4.microsoft.com/Windows%208.1/Windows%20Server%202012%20R2/sp1/Fix526512/9600/free/482449_intl_x64_zip.exe" ("/quiet", "/norestart")
+                    Package-Install "KB3041832" "CPU usage is high when you use RPC over HTTP protocol in Windows 8.1 or Windows Server 2012 R2" "Windows8.1-KB3041832-x64.msu|482449_intl_x64_zip.exe" "https://hotfixv4.trafficmanager.net/Windows%208.1/Windows%20Server%202012%20R2/sp1/Fix526512/9600/free/482449_intl_x64_zip.exe" ("/quiet", "/norestart")
                     break
                 }
                 $WS2016_MAJOR {
@@ -2439,17 +2525,23 @@ process {
         }
 
         3 {
+            if( !($State['InstallEdge'])){
             Write-MyOutput "Installing Exchange prerequisites (continued)"
-            If( (is-MinimalBuild -BuildNumber $FullOSVersion -ReferenceBuildNumber $WS2019_PREFULL) -and (is-ServerCore) ) {
-                Package-Install "{41D635FE-4F9D-47F7-8230-9B29D6D42D31}" "Unified Communications Managed API 4.0 Runtime (Core)" "Setup.exe" (Join-Path -Path $State['SourcePath'] -ChildPath 'UcmaRedist\Setup.exe') ("/passive", "/norestart") -NoDownload
-            }
-            Else {
-                Package-Install "{41D635FE-4F9D-47F7-8230-9B29D6D42D31}" "Unified Communications Managed API 4.0 Runtime" "UcmaRuntimeSetup.exe" "http://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" ("/passive", "/norestart")
+                If( (is-MinimalBuild -BuildNumber $FullOSVersion -ReferenceBuildNumber $WS2019_PREFULL) -and (is-ServerCore) ) {
+                    Package-Install "{41D635FE-4F9D-47F7-8230-9B29D6D42D31}" "Unified Communications Managed API 4.0 Runtime (Core)" "Setup.exe" (Join-Path -Path $State['SourcePath'] -ChildPath 'UcmaRedist\Setup.exe') ("/passive", "/norestart") -NoDownload
+                }
+                Else {
+                    Package-Install "{41D635FE-4F9D-47F7-8230-9B29D6D42D31}" "Unified Communications Managed API 4.0 Runtime" "UcmaRuntimeSetup.exe" "http://download.microsoft.com/download/2/C/4/2C47A5C1-A1F3-4843-B9FE-84C0032C61EC/UcmaRuntimeSetup.exe" ("/passive", "/norestart")
+                }
+            }else{
+                Write-MyOutput 'Setting Primary DNS Suffix'
+                Set-EdgeDNSSuffix -DNSSuffix $State['EdgeDNSSuffix']
             }
             If ($State["OrganizationName"]) {
                 Write-MyOutput "Checking/Preparing Active Directory"
                 Prepare-Exchange
             }
+            
         }
 
         4 {
@@ -2503,6 +2595,9 @@ process {
             }
  		    If( $State["InstallCAS"]) {
                 # Insert Client Access Server specifics here
+            }
+            If( $State["InstallEdge"]) {
+                # Insert Edge Server specifics here
             }
             # Insert generic customizations here
 
