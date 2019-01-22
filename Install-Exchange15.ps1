@@ -8,7 +8,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.00.1, October 26rd, 2018
+    Version 3.00.3, December 15th, 2018
 
     Thanks to Maarten Piederiet, Thomas Stensitzki, Brian Reid, Martin Sieber, Sebastiaan Brozius, Bobby West, 
     Pavel Andreev, Rob Whaley, Simon Poirier and everyone else who provided feedback or contributed in other ways.
@@ -221,6 +221,9 @@
     3.00.0  Added Exchange 2019 support
             Rewritten VC++ detection
     3.00.1  Integrated Exchange 2019 RTM Cipher correction
+    3.00.2  Replaced filename constructs with Join-Path
+            Fixed typo in installing KB4054530
+    3.00.3  Fixed typos in Join-Path constructs
 
     .PARAMETER Organization
     Specifies name of the Exchange organization to create. When omitted, the step
@@ -481,7 +484,7 @@ param(
 
 process {
 
-    $ScriptVersion                  = '3.00.0'
+    $ScriptVersion                  = '3.00.2'
 
     $ERR_OK                         = 0
     $ERR_PROBLEMADPREPARE	    = 1001
@@ -719,12 +722,12 @@ process {
     Function Check-Package () {
         Param ( [String]$Package, [String]$URL, [String]$FileName, [String]$InstallPath)
         $res= $true
-        If( !( Test-Path "$InstallPath\$FileName")) {
+        If( !( Test-Path $(Join-Path $InstallPath $Filename))) {
             If( $URL) {
                 Write-MyOutput "Package $Package not found, downloading to $FileName"
                 Try{
                     Write-MyVerbose "Source: $URL"
-                    Start-BitsTransfer -Source $URL -Destination "$InstallPath\$FileName"
+                    Start-BitsTransfer -Source $URL -Destination $(Join-Path $InstallPath $Filename)
                 }
                 Catch{
                     Write-MyError 'Problem downloading package from URL'
@@ -934,9 +937,9 @@ process {
 
     Function StartWait-Extract ( $FilePath, $FileName) {
         Write-MyVerbose "Extracting $FilePath\$FileName to $FilePath"
-        If( Test-Path "$FilePath\$FileName") {
-            $TempNam= "$FilePath\$FileName.zip"
-            Copy-Item "$FilePath\$FileName" "$TempNam" -Force
+        If( Test-Path $(Join-Path $FilePath $Filename)) {
+            $TempNam= "$(Join-Path $FilePath $Filename).zip"
+            Copy-Item $(Join-Path $FilePath $Filename) "$TempNam" -Force
             $shellApplication = new-object -com shell.application
             $zipPackage = $shellApplication.NameSpace( $TempNam)
             $destFolder = $shellApplication.NameSpace( $FilePath)
@@ -1096,7 +1099,7 @@ process {
         Write-MyVerbose 'Loading Exchange PowerShell module'
         If( -not ( Get-Command Connect-ExchangeServer -ErrorAction SilentlyContinue)) {
             $SetupPath= (Get-ItemProperty -Path $EXCHANGEINSTALLKEY -Name MsiInstallPath -ErrorAction SilentlyContinue).MsiInstallPath
-            If( ($State['InstallEdge'] -eq $true -and $SetupPath -and (Test-Path "$SetupPath\bin\Exchange.ps1")) -or ($State['InstallEdge'] -eq $false -and $SetupPath -and (Test-Path "$SetupPath\bin\RemoteExchange.ps1"))) {
+            If( ($State['InstallEdge'] -eq $true -and $SetupPath -and (Test-Path $(Join-Path $SetupPath "\bin\Exchange.ps1"))) -or ($State['InstallEdge'] -eq $false -and $SetupPath -and (Test-Path $(Join-Path $SetupPath "\bin\RemoteExchange.ps1")))) {
                 If( $State['InstallEdge']) {
                     Add-PSSnapin Microsoft.Exchange.Management.PowerShell.E2010
                     . "$SetupPath\bin\Exchange.ps1" | Out-Null
@@ -1849,12 +1852,12 @@ process {
             }
         }
         Write-MyOutput 'Checking if we can access Exchange setup ..'
-        If(! (Test-Path "$($State['SourcePath'])setup.exe")) {
+        If(! (Test-Path $(Join-Path $($State['SourcePath']) "setup.exe"))) {
             Write-MyError "Can't find Exchange setup at $($State['SourcePath'])"
             Exit $ERR_MISSINGEXCHANGESETUP
         }
         Else {
-            Write-MyOutput "Exchange setup located at $($State['SourcePath'])setup.exe"
+            Write-MyOutput "Exchange setup located at $(Join-Path $($State['SourcePath']) "setup.exe")"
         }
 
         $SetupVersion= File-DetectVersion "$($State['SourcePath'])\Setup\ServerRoles\Common\ExSetup.exe"
@@ -2564,7 +2567,7 @@ process {
                 If( $State["Install472"]) {
                     Remove-NETFrameworkInstallBlock '4.7.2' 'KB4054530' '472'
                     If( (Get-NETVersion) -lt $NETVERSION_472) {
-                        Package-Install "KB4054530" "Microsoft .NET Framework 4.7.2" "NDP472-KB4054530-x86-x64-AllOS-ENU" "https://download.microsoft.com/download/6/E/4/6E48E8AB-DC00-419E-9704-06DD46E5F81D/NDP472-KB4054530-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
+                        Package-Install "KB4054530" "Microsoft .NET Framework 4.7.2" "NDP472-KB4054530-x86-x64-AllOS-ENU.exe" "https://download.microsoft.com/download/6/E/4/6E48E8AB-DC00-419E-9704-06DD46E5F81D/NDP472-KB4054530-x86-x64-AllOS-ENU.exe" ("/q", "/norestart")
                     }
                     Else {
                         Write-MyOutput ".NET Framework 4.7.2 or later detected"
